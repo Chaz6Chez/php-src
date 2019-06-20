@@ -2,7 +2,7 @@
    +----------------------------------------------------------------------+
    | PHP Version 7                                                        |
    +----------------------------------------------------------------------+
-   | Copyright (c) 1997-2018 The PHP Group                                |
+   | Copyright (c) The PHP Group                                          |
    +----------------------------------------------------------------------+
    | This source file is subject to version 3.01 of the PHP license,      |
    | that is bundled with this package in the file LICENSE, and is        |
@@ -15,8 +15,6 @@
    | Authors: Gustavo Lopes    <cataphract@php.net>                       |
    +----------------------------------------------------------------------+
  */
-
-/* $Id$ */
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -465,8 +463,9 @@ static int _php_mcast_join_leave(
 			sizeof(greq));
 #else
 	if (sock->type == AF_INET) {
-		struct ip_mreq mreq = {0};
+		struct ip_mreq mreq;
 		struct in_addr addr;
+		memset(&mreq, 0, sizeof(struct ip_mreq));
 
 		assert(group_len == sizeof(struct sockaddr_in));
 
@@ -485,7 +484,8 @@ static int _php_mcast_join_leave(
 	}
 #if HAVE_IPV6
 	else if (sock->type == AF_INET6) {
-		struct ipv6_mreq mreq = {0};
+		struct ipv6_mreq mreq;
+		memset(&mreq, 0, sizeof(struct ipv6_mreq));
 
 		assert(group_len == sizeof(struct sockaddr_in6));
 

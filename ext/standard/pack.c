@@ -2,7 +2,7 @@
    +----------------------------------------------------------------------+
    | PHP Version 7                                                        |
    +----------------------------------------------------------------------+
-   | Copyright (c) 1997-2018 The PHP Group                                |
+   | Copyright (c) The PHP Group                                          |
    +----------------------------------------------------------------------+
    | This source file is subject to version 3.01 of the PHP license,      |
    | that is bundled with this package in the file LICENSE, and is        |
@@ -15,7 +15,6 @@
    | Author: Chris Schneider <cschneid@relog.ch>                          |
    +----------------------------------------------------------------------+
  */
-/* $Id$ */
 
 #include "php.h"
 
@@ -298,7 +297,12 @@ PHP_FUNCTION(pack)
 				}
 
 				if (arg < 0) {
-					convert_to_string(&argv[currentarg]);
+					if (!try_convert_to_string(&argv[currentarg])) {
+						efree(formatcodes);
+						efree(formatargs);
+						return;
+					}
+
 					arg = Z_STRLEN(argv[currentarg]);
 					if (code == 'Z') {
 						/* add one because Z is always NUL-terminated:
@@ -711,7 +715,7 @@ static zend_long php_unpack(char *data, size_t size, int issigned, int *map)
  * Implemented formats are Z, A, a, h, H, c, C, s, S, i, I, l, L, n, N, q, Q, J, P, f, d, x, X, @.
  * Added g, G for little endian float and big endian float, added e, E for little endian double and big endian double.
  */
-/* {{{ proto array unpack(string format, string input)
+/* {{{ proto array|false unpack(string format, string input)
    Unpack binary string into named array elements according to format argument */
 PHP_FUNCTION(unpack)
 {
@@ -850,7 +854,7 @@ PHP_FUNCTION(unpack)
 				break;
 #else
 				php_error_docref(NULL, E_WARNING, "64-bit format codes are not available for 32-bit versions of PHP");
-				zval_dtor(return_value);
+				zend_array_destroy(Z_ARR_P(return_value));
 				RETURN_FALSE;
 #endif
 
@@ -870,14 +874,14 @@ PHP_FUNCTION(unpack)
 
 			default:
 				php_error_docref(NULL, E_WARNING, "Invalid format type %c", type);
-				zval_dtor(return_value);
+				zend_array_destroy(Z_ARR_P(return_value));
 				RETURN_FALSE;
 				break;
 		}
 
 		if (size != 0 && size != -1 && size < 0) {
 			php_error_docref(NULL, E_WARNING, "Type %c: integer overflow", type);
-			zval_dtor(return_value);
+			zend_array_destroy(Z_ARR_P(return_value));
 			RETURN_FALSE;
 		}
 
@@ -896,7 +900,7 @@ PHP_FUNCTION(unpack)
 
 			if (size != 0 && size != -1 && INT_MAX - size + 1 < inputpos) {
 				php_error_docref(NULL, E_WARNING, "Type %c: integer overflow", type);
-				zval_dtor(return_value);
+				zend_array_destroy(Z_ARR_P(return_value));
 				RETURN_FALSE;
 			}
 
@@ -1192,7 +1196,7 @@ PHP_FUNCTION(unpack)
 				break;
 			} else {
 				php_error_docref(NULL, E_WARNING, "Type %c: not enough input, need %d, have " ZEND_LONG_FMT, type, size, inputlen - inputpos);
-				zval_dtor(return_value);
+				zend_array_destroy(Z_ARR_P(return_value));
 				RETURN_FALSE;
 			}
 		}
@@ -1332,12 +1336,3 @@ PHP_MINIT_FUNCTION(pack)
 	return SUCCESS;
 }
 /* }}} */
-
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * End:
- * vim600: noet sw=4 ts=4 fdm=marker
- * vim<600: noet sw=4 ts=4
- */

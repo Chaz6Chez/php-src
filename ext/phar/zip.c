@@ -2,7 +2,7 @@
   +----------------------------------------------------------------------+
   | ZIP archive support for Phar                                         |
   +----------------------------------------------------------------------+
-  | Copyright (c) 2007-2018 The PHP Group                                |
+  | Copyright (c) The PHP Group                                          |
   +----------------------------------------------------------------------+
   | This source file is subject to version 3.01 of the PHP license,      |
   | that is bundled with this package in the file LICENSE, and is        |
@@ -147,8 +147,15 @@ static void phar_zip_u2d_time(time_t time, char *dtime, char *ddate) /* {{{ */
 	struct tm *tm, tmbuf;
 
 	tm = php_localtime_r(&time, &tmbuf);
-	cdate = ((tm->tm_year+1900-1980)<<9) + ((tm->tm_mon+1)<<5) + tm->tm_mday;
-	ctime = ((tm->tm_hour)<<11) + ((tm->tm_min)<<5) + ((tm->tm_sec)>>1);
+	if (tm->tm_year >= 1980) {
+		cdate = ((tm->tm_year+1900-1980)<<9) + ((tm->tm_mon+1)<<5) + tm->tm_mday;
+		ctime = ((tm->tm_hour)<<11) + ((tm->tm_min)<<5) + ((tm->tm_sec)>>1);
+	} else {
+		/* This is the earliest date/time supported by zip. */
+		cdate = (1<<5) + 1; /* 1980-01-01 */
+		ctime = 0; /* 00:00:00 */
+	}
+
 	PHAR_SET_16(dtime, ctime);
 	PHAR_SET_16(ddate, cdate);
 }
@@ -293,13 +300,13 @@ foundit:
 	entry.is_persistent = mydata->is_persistent;
 #define PHAR_ZIP_FAIL_FREE(errmsg, save) \
 			zend_hash_destroy(&mydata->manifest); \
-			HT_FLAGS(&mydata->manifest) = 0; \
+			HT_INVALIDATE(&mydata->manifest); \
 			zend_hash_destroy(&mydata->mounted_dirs); \
-			HT_FLAGS(&mydata->mounted_dirs) = 0; \
+			HT_INVALIDATE(&mydata->mounted_dirs); \
 			zend_hash_destroy(&mydata->virtual_dirs); \
-			HT_FLAGS(&mydata->virtual_dirs) = 0; \
+			HT_INVALIDATE(&mydata->virtual_dirs); \
 			php_stream_close(fp); \
-			zval_dtor(&mydata->metadata); \
+			zval_ptr_dtor(&mydata->metadata); \
 			if (mydata->signature) { \
 				efree(mydata->signature); \
 			} \
@@ -315,13 +322,13 @@ foundit:
 			return FAILURE;
 #define PHAR_ZIP_FAIL(errmsg) \
 			zend_hash_destroy(&mydata->manifest); \
-			HT_FLAGS(&mydata->manifest) = 0; \
+			HT_INVALIDATE(&mydata->manifest); \
 			zend_hash_destroy(&mydata->mounted_dirs); \
-			HT_FLAGS(&mydata->mounted_dirs) = 0; \
+			HT_INVALIDATE(&mydata->mounted_dirs); \
 			zend_hash_destroy(&mydata->virtual_dirs); \
-			HT_FLAGS(&mydata->virtual_dirs) = 0; \
+			HT_INVALIDATE(&mydata->virtual_dirs); \
 			php_stream_close(fp); \
-			zval_dtor(&mydata->metadata); \
+			zval_ptr_dtor(&mydata->metadata); \
 			if (mydata->signature) { \
 				efree(mydata->signature); \
 			} \
@@ -589,7 +596,7 @@ foundit:
 					if (str) {
 						entry.uncompressed_filesize = ZSTR_LEN(str);
 						actual_alias = estrndup(ZSTR_VAL(str), ZSTR_LEN(str));
-						zend_string_release(str);
+						zend_string_release_ex(str, 0);
 					} else {
 						actual_alias = NULL;
 						entry.uncompressed_filesize = 0;
@@ -621,7 +628,7 @@ foundit:
 					if (str) {
 						entry.uncompressed_filesize = ZSTR_LEN(str);
 						actual_alias = estrndup(ZSTR_VAL(str), ZSTR_LEN(str));
-						zend_string_release(str);
+						zend_string_release_ex(str, 0);
 					} else {
 						actual_alias = NULL;
 						entry.uncompressed_filesize = 0;
@@ -643,7 +650,7 @@ foundit:
 					if (str) {
 						entry.uncompressed_filesize = ZSTR_LEN(str);
 						actual_alias = estrndup(ZSTR_VAL(str), ZSTR_LEN(str));
-						zend_string_release(str);
+						zend_string_release_ex(str, 0);
 					} else {
 						actual_alias = NULL;
 						entry.uncompressed_filesize = 0;
@@ -1233,12 +1240,7 @@ int phar_zip_flush(phar_archive_data *phar, char *user_stub, zend_long len, int 
 		entry.filename = estrndup(".phar/alias.txt", sizeof(".phar/alias.txt")-1);
 		entry.filename_len = sizeof(".phar/alias.txt")-1;
 
-		if (NULL == zend_hash_str_update_mem(&phar->manifest, entry.filename, entry.filename_len, (void*)&entry, sizeof(phar_entry_info))) {
-			if (error) {
-				spprintf(error, 0, "unable to set alias in zip-based phar \"%s\"", phar->fname);
-			}
-			return EOF;
-		}
+		zend_hash_str_update_mem(&phar->manifest, entry.filename, entry.filename_len, (void*)&entry, sizeof(phar_entry_info));
 	} else {
 		zend_hash_str_del(&phar->manifest, ".phar/alias.txt", sizeof(".phar/alias.txt")-1);
 	}
@@ -1276,7 +1278,7 @@ int phar_zip_flush(phar_archive_data *phar, char *user_stub, zend_long len, int 
 				if (str) {
 					len = ZSTR_LEN(str);
 					user_stub = estrndup(ZSTR_VAL(str), ZSTR_LEN(str));
-					zend_string_release(str);
+					zend_string_release_ex(str, 0);
 				} else {
 					user_stub = NULL;
 					len = 0;
@@ -1331,15 +1333,7 @@ int phar_zip_flush(phar_archive_data *phar, char *user_stub, zend_long len, int 
 		entry.filename = estrndup(".phar/stub.php", sizeof(".phar/stub.php")-1);
 		entry.filename_len = sizeof(".phar/stub.php")-1;
 
-		if (NULL == zend_hash_str_update_mem(&phar->manifest, entry.filename, entry.filename_len, (void*)&entry, sizeof(phar_entry_info))) {
-			if (free_user_stub) {
-				efree(user_stub);
-			}
-			if (error) {
-				spprintf(error, 0, "unable to set stub in zip-based phar \"%s\"", phar->fname);
-			}
-			return EOF;
-		}
+		zend_hash_str_update_mem(&phar->manifest, entry.filename, entry.filename_len, (void*)&entry, sizeof(phar_entry_info));
 
 		if (free_user_stub) {
 			efree(user_stub);
@@ -1378,14 +1372,7 @@ int phar_zip_flush(phar_archive_data *phar, char *user_stub, zend_long len, int 
 				efree(entry.filename);
 			}
 		} else {
-			if (NULL == zend_hash_str_update_mem(&phar->manifest, entry.filename, entry.filename_len, (void*)&entry, sizeof(phar_entry_info))) {
-				php_stream_close(entry.fp);
-				efree(entry.filename);
-				if (error) {
-					spprintf(error, 0, "unable to overwrite stub in zip-based phar \"%s\"", phar->fname);
-				}
-				return EOF;
-			}
+			zend_hash_str_update_mem(&phar->manifest, entry.filename, entry.filename_len, (void*)&entry, sizeof(phar_entry_info));
 		}
 	}
 nostub:
@@ -1553,12 +1540,3 @@ nocentralerror:
 	return EOF;
 }
 /* }}} */
-
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * End:
- * vim600: noet sw=4 ts=4 fdm=marker
- * vim<600: noet sw=4 ts=4
- */

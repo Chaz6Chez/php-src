@@ -1,17 +1,11 @@
 --TEST--
 Test getimagesize() function : basic functionality - load APP info from jpeg.
---SKIPIF--
-<?php
-	if (!defined("IMAGETYPE_JPEG")) {
-		die("skip jpeg format is not available");
-	}
-?>
 --FILE--
 <?php
 /* Prototype  : proto array getimagesize(string imagefile [, array info])
- * Description: Get the size of an image as 4-element array 
+ * Description: Get the size of an image as 4-element array
  * Source code: ext/standard/image.c
- * Alias to functions: 
+ * Alias to functions:
  */
 
 /*
@@ -22,7 +16,7 @@ $arr['this'] = "will";
 $arr['all'] = "be destroyed!";
 $arr['APP1'] = "and this too";
 
-getimagesize( dirname(__FILE__)."/testAPP.jpg", $arr);
+getimagesize( __DIR__."/testAPP.jpg", $arr);
 
 foreach ($arr as $key => $value) {
 	echo "$key - length: ". strlen($value) ."; md5: " . md5($value) .  "\n" ;

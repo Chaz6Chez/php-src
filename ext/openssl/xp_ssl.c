@@ -2,7 +2,7 @@
   +----------------------------------------------------------------------+
   | PHP Version 7                                                        |
   +----------------------------------------------------------------------+
-  | Copyright (c) 1997-2018 The PHP Group                                |
+  | Copyright (c) The PHP Group                                          |
   +----------------------------------------------------------------------+
   | This source file is subject to version 3.01 of the PHP license,      |
   | that is bundled with this package in the file LICENSE, and is        |
@@ -15,10 +15,9 @@
   | Authors: Wez Furlong <wez@thebrainroom.com>                          |
   |          Daniel Lowrey <rdlowrey@php.net>                            |
   |          Chris Wright <daverandom@php.net>                           |
+  |          Jakub Zelenka <bukka@php.net>                               |
   +----------------------------------------------------------------------+
 */
-
-/* $Id$ */
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -52,12 +51,30 @@
 #undef X509_EXTENSIONS
 #endif
 
-#ifndef OPENSSL_NO_SSL3
-#define HAVE_SSL3 1
+/* Flags for determining allowed stream crypto methods */
+#define STREAM_CRYPTO_IS_CLIENT            (1<<0)
+#define STREAM_CRYPTO_METHOD_SSLv2         (1<<1)
+#define STREAM_CRYPTO_METHOD_SSLv3         (1<<2)
+#define STREAM_CRYPTO_METHOD_TLSv1_0       (1<<3)
+#define STREAM_CRYPTO_METHOD_TLSv1_1       (1<<4)
+#define STREAM_CRYPTO_METHOD_TLSv1_2       (1<<5)
+#define STREAM_CRYPTO_METHOD_TLSv1_3       (1<<6)
+
+#ifndef OPENSSL_NO_TLS1_METHOD
+#define HAVE_TLS1 1
 #endif
 
+#ifndef OPENSSL_NO_TLS1_1_METHOD
 #define HAVE_TLS11 1
+#endif
+
+#ifndef OPENSSL_NO_TLS1_2_METHOD
 #define HAVE_TLS12 1
+#endif
+
+#if OPENSSL_VERSION_NUMBER >= 0x10101000 && !defined(OPENSSL_NO_TLS1_3)
+#define HAVE_TLS13 1
+#endif
 
 #ifndef OPENSSL_NO_ECDH
 #define HAVE_ECDH 1
@@ -74,19 +91,25 @@
 #define HAVE_SEC_LEVEL 1
 #endif
 
-/* Flags for determining allowed stream crypto methods */
-#define STREAM_CRYPTO_IS_CLIENT            (1<<0)
-#define STREAM_CRYPTO_METHOD_SSLv2         (1<<1)
-#define STREAM_CRYPTO_METHOD_SSLv3         (1<<2)
-#define STREAM_CRYPTO_METHOD_TLSv1_0       (1<<3)
-#define STREAM_CRYPTO_METHOD_TLSv1_1       (1<<4)
-#define STREAM_CRYPTO_METHOD_TLSv1_2       (1<<5)
+#ifndef OPENSSL_NO_SSL3
+#define HAVE_SSL3 1
+#define PHP_OPENSSL_MIN_PROTO_VERSION STREAM_CRYPTO_METHOD_SSLv3
+#else
+#define PHP_OPENSSL_MIN_PROTO_VERSION STREAM_CRYPTO_METHOD_TLSv1_0
+#endif
+#ifdef HAVE_TLS13
+#define PHP_OPENSSL_MAX_PROTO_VERSION STREAM_CRYPTO_METHOD_TLSv1_3
+#else
+#define PHP_OPENSSL_MAX_PROTO_VERSION STREAM_CRYPTO_METHOD_TLSv1_2
+#endif
 
 /* Simplify ssl context option retrieval */
 #define GET_VER_OPT(name) \
 	(PHP_STREAM_CONTEXT(stream) && (val = php_stream_context_get_option(PHP_STREAM_CONTEXT(stream), "ssl", name)) != NULL)
 #define GET_VER_OPT_STRING(name, str) \
-	if (GET_VER_OPT(name)) { convert_to_string_ex(val); str = Z_STRVAL_P(val); }
+	if (GET_VER_OPT(name)) { \
+		if (try_convert_to_string(val)) str = Z_STRVAL_P(val); \
+	}
 #define GET_VER_OPT_LONG(name, num) \
 	if (GET_VER_OPT(name)) { num = zval_get_long(val); }
 
@@ -94,7 +117,7 @@
 #define PHP_X509_NAME_ENTRY_TO_UTF8(ne, i, out) \
 	ASN1_STRING_to_UTF8(&out, X509_NAME_ENTRY_get_data(X509_NAME_get_entry(ne, i)))
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined (LIBRESSL_VERSION_NUMBER)
+#if PHP_OPENSSL_API_VERSION < 0x10100
 static RSA *php_openssl_tmp_rsa_cb(SSL *s, int is_export, int keylength);
 #endif
 
@@ -313,7 +336,7 @@ static int php_openssl_x509_fingerprint_cmp(X509 *peer, const char *method, cons
 	fingerprint = php_openssl_x509_fingerprint(peer, method, 0);
 	if (fingerprint) {
 		result = strcasecmp(expected, ZSTR_VAL(fingerprint));
-		zend_string_release(fingerprint);
+		zend_string_release_ex(fingerprint, 0);
 	}
 
 	return result;
@@ -481,6 +504,7 @@ static zend_bool php_openssl_matches_common_name(X509 *peer, const char *subject
 static int php_openssl_apply_peer_verification_policy(SSL *ssl, X509 *peer, php_stream *stream) /* {{{ */
 {
 	zval *val = NULL;
+	zval *peer_fingerprint;
 	char *peer_name = NULL;
 	int err,
 		must_verify_peer,
@@ -498,6 +522,7 @@ static int php_openssl_apply_peer_verification_policy(SSL *ssl, X509 *peer, php_
 		: sslsock->is_client;
 
 	must_verify_fingerprint = GET_VER_OPT("peer_fingerprint");
+	peer_fingerprint = val;
 
 	if ((must_verify_peer || must_verify_peer_name || must_verify_fingerprint) && peer == NULL) {
 		php_error_docref(NULL, E_WARNING, "Could not get peer certificate");
@@ -529,8 +554,8 @@ static int php_openssl_apply_peer_verification_policy(SSL *ssl, X509 *peer, php_
 
 	/* If a peer_fingerprint match is required this trumps peer and peer_name verification */
 	if (must_verify_fingerprint) {
-		if (Z_TYPE_P(val) == IS_STRING || Z_TYPE_P(val) == IS_ARRAY) {
-			if (!php_openssl_x509_fingerprint_match(peer, val)) {
+		if (Z_TYPE_P(peer_fingerprint) == IS_STRING || Z_TYPE_P(peer_fingerprint) == IS_ARRAY) {
+			if (!php_openssl_x509_fingerprint_match(peer, peer_fingerprint)) {
 				php_error_docref(NULL, E_WARNING,
 					"peer_fingerprint match failure"
 				);
@@ -631,7 +656,9 @@ static int php_openssl_win_cert_verify_callback(X509_STORE_CTX *x509_store_ctx, 
 		OPENSSL_free(der_buf);
 
 		if (cert_ctx == NULL) {
-			php_error_docref(NULL, E_WARNING, "Error creating certificate context: %s", php_win_err());
+			char *err = php_win_err();
+			php_error_docref(NULL, E_WARNING, "Error creating certificate context: %s", err);
+			php_win_err_free(err);
 			RETURN_CERT_VERIFY_FAILURE(SSL_R_CERTIFICATE_VERIFY_FAILED);
 		}
 	}
@@ -653,7 +680,9 @@ static int php_openssl_win_cert_verify_callback(X509_STORE_CTX *x509_store_ctx, 
 		chain_flags = CERT_CHAIN_CACHE_END_CERT | CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT;
 
 		if (!CertGetCertificateChain(NULL, cert_ctx, NULL, NULL, &chain_params, chain_flags, NULL, &cert_chain_ctx)) {
-			php_error_docref(NULL, E_WARNING, "Error getting certificate chain: %s", php_win_err());
+			char *err = php_win_err();
+			php_error_docref(NULL, E_WARNING, "Error getting certificate chain: %s", err);
+			php_win_err_free(err);
 			CertFreeCertificateContext(cert_ctx);
 			RETURN_CERT_VERIFY_FAILURE(SSL_R_CERTIFICATE_VERIFY_FAILED);
 		}
@@ -737,7 +766,9 @@ static int php_openssl_win_cert_verify_callback(X509_STORE_CTX *x509_store_ctx, 
 		CertFreeCertificateContext(cert_ctx);
 
 		if (!verify_result) {
-			php_error_docref(NULL, E_WARNING, "Error verifying certificate chain policy: %s", php_win_err());
+			char *err = php_win_err();
+			php_error_docref(NULL, E_WARNING, "Error verifying certificate chain policy: %s", err);
+			php_win_err_free(err);
 			RETURN_CERT_VERIFY_FAILURE(SSL_R_CERTIFICATE_VERIFY_FAILED);
 		}
 
@@ -869,6 +900,7 @@ static int php_openssl_enable_peer_verification(SSL_CTX *ctx, php_stream *stream
 
 	if (cafile || capath) {
 		if (!SSL_CTX_load_verify_locations(ctx, cafile, capath)) {
+			ERR_clear_error();
 			if (cafile && !php_openssl_load_stream_cafile(SSL_CTX_get_cert_store(ctx), cafile)) {
 				return FAILURE;
 			}
@@ -945,46 +977,6 @@ static int php_openssl_set_local_cert(SSL_CTX *ctx, php_stream *stream) /* {{{ *
 }
 /* }}} */
 
-static const SSL_METHOD *php_openssl_select_crypto_method(zend_long method_value, int is_client) /* {{{ */
-{
-	if (method_value == STREAM_CRYPTO_METHOD_SSLv2) {
-		php_error_docref(NULL, E_WARNING,
-				"SSLv2 unavailable in this PHP version");
-		return NULL;
-	} else if (method_value == STREAM_CRYPTO_METHOD_SSLv3) {
-#ifdef HAVE_SSL3
-		return is_client ? SSLv3_client_method() : SSLv3_server_method();
-#else
-		php_error_docref(NULL, E_WARNING,
-				"SSLv3 unavailable in the OpenSSL library against which PHP is linked");
-		return NULL;
-#endif
-	} else if (method_value == STREAM_CRYPTO_METHOD_TLSv1_0) {
-		return is_client ? TLSv1_client_method() : TLSv1_server_method();
-	} else if (method_value == STREAM_CRYPTO_METHOD_TLSv1_1) {
-#ifdef HAVE_TLS11
-		return is_client ? TLSv1_1_client_method() : TLSv1_1_server_method();
-#else
-		php_error_docref(NULL, E_WARNING,
-				"TLSv1.1 unavailable in the OpenSSL library against which PHP is linked");
-		return NULL;
-#endif
-	} else if (method_value == STREAM_CRYPTO_METHOD_TLSv1_2) {
-#ifdef HAVE_TLS12
-		return is_client ? TLSv1_2_client_method() : TLSv1_2_server_method();
-#else
-		php_error_docref(NULL, E_WARNING,
-				"TLSv1.2 unavailable in the OpenSSL library against which PHP is linked");
-		return NULL;
-#endif
-	} else {
-		php_error_docref(NULL, E_WARNING,
-				"Invalid crypto method");
-		return NULL;
-	}
-}
-/* }}} */
-
 #define PHP_SSL_MAX_VERSION_LEN 32
 
 static char *php_openssl_cipher_get_version(const SSL_CIPHER *c, char *buffer, size_t max_len) /* {{{ */
@@ -1000,6 +992,7 @@ static char *php_openssl_cipher_get_version(const SSL_CIPHER *c, char *buffer, s
 }
 /* }}} */
 
+#if PHP_OPENSSL_API_VERSION < 0x10100
 static int php_openssl_get_crypto_method_ctx_flags(int method_flags) /* {{{ */
 {
 	int ssl_ctx_options = SSL_OP_ALL;
@@ -1012,9 +1005,11 @@ static int php_openssl_get_crypto_method_ctx_flags(int method_flags) /* {{{ */
 		ssl_ctx_options |= SSL_OP_NO_SSLv3;
 	}
 #endif
+#ifdef HAVE_TLS1
 	if (!(method_flags & STREAM_CRYPTO_METHOD_TLSv1_0)) {
 		ssl_ctx_options |= SSL_OP_NO_TLSv1;
 	}
+#endif
 #ifdef HAVE_TLS11
 	if (!(method_flags & STREAM_CRYPTO_METHOD_TLSv1_1)) {
 		ssl_ctx_options |= SSL_OP_NO_TLSv1_1;
@@ -1025,8 +1020,100 @@ static int php_openssl_get_crypto_method_ctx_flags(int method_flags) /* {{{ */
 		ssl_ctx_options |= SSL_OP_NO_TLSv1_2;
 	}
 #endif
+#ifdef HAVE_TLS13
+	if (!(method_flags & STREAM_CRYPTO_METHOD_TLSv1_3)) {
+		ssl_ctx_options |= SSL_OP_NO_TLSv1_3;
+	}
+#endif
 
 	return ssl_ctx_options;
+}
+/* }}} */
+#endif
+
+static inline int php_openssl_get_min_proto_version_flag(int flags) /* {{{ */
+{
+	int ver;
+	for (ver = PHP_OPENSSL_MIN_PROTO_VERSION; ver <= PHP_OPENSSL_MAX_PROTO_VERSION; ver <<= 1) {
+		if (flags & ver) {
+			return ver;
+		}
+	}
+	return PHP_OPENSSL_MAX_PROTO_VERSION;
+}
+/* }}} */
+
+static inline int php_openssl_get_max_proto_version_flag(int flags) /* {{{ */
+{
+	int ver;
+	for (ver = PHP_OPENSSL_MAX_PROTO_VERSION; ver >= PHP_OPENSSL_MIN_PROTO_VERSION; ver >>= 1) {
+		if (flags & ver) {
+			return ver;
+		}
+	}
+	return STREAM_CRYPTO_METHOD_TLSv1_3;
+}
+/* }}} */
+
+#if PHP_OPENSSL_API_VERSION >= 0x10100
+static inline int php_openssl_map_proto_version(int flag) /* {{{ */
+{
+	switch (flag) {
+#ifdef HAVE_TLS13
+		case STREAM_CRYPTO_METHOD_TLSv1_3:
+			return TLS1_3_VERSION;
+#endif
+		case STREAM_CRYPTO_METHOD_TLSv1_2:
+			return TLS1_2_VERSION;
+		case STREAM_CRYPTO_METHOD_TLSv1_1:
+			return TLS1_1_VERSION;
+		case STREAM_CRYPTO_METHOD_TLSv1_0:
+			return TLS1_VERSION;
+#ifdef HAVE_SSL3
+		case STREAM_CRYPTO_METHOD_SSLv3:
+			return SSL3_VERSION;
+#endif
+		default:
+			return TLS1_2_VERSION;
+	}
+}
+/* }}} */
+
+static int php_openssl_get_min_proto_version(int flags) /* {{{ */
+{
+	return php_openssl_map_proto_version(php_openssl_get_min_proto_version_flag(flags));
+}
+/* }}} */
+
+static int php_openssl_get_max_proto_version(int flags) /* {{{ */
+{
+	return php_openssl_map_proto_version(php_openssl_get_max_proto_version_flag(flags));
+}
+/* }}} */
+#endif
+
+static int php_openssl_get_proto_version_flags(int flags, int min, int max) /* {{{ */
+{
+	int ver;
+
+	if (!min) {
+		min = php_openssl_get_min_proto_version_flag(flags);
+	}
+	if (!max) {
+		max = php_openssl_get_max_proto_version_flag(flags);
+	}
+
+	for (ver = PHP_OPENSSL_MIN_PROTO_VERSION; ver <= PHP_OPENSSL_MAX_PROTO_VERSION; ver <<= 1) {
+		if (ver >= min && ver <= max) {
+			if (!(flags & ver)) {
+				flags |= ver;
+			}
+		} else if (flags & ver) {
+			flags &= ~ver;
+		}
+	}
+
+	return flags;
 }
 /* }}} */
 
@@ -1072,7 +1159,7 @@ static void php_openssl_limit_handshake_reneg(const SSL *ssl) /* {{{ */
 
 			/* Closing the stream inside this callback would segfault! */
 			stream->flags |= PHP_STREAM_FLAG_NO_FCLOSE;
-			if (FAILURE == call_user_function_ex(EG(function_table), NULL, val, &retval, 1, &param, 0, NULL)) {
+			if (FAILURE == call_user_function_ex(NULL, NULL, val, &retval, 1, &param, 0, NULL)) {
 				php_error(E_WARNING, "SSL: failed invoking reneg limit notification callback");
 			}
 			stream->flags ^= PHP_STREAM_FLAG_NO_FCLOSE;
@@ -1137,7 +1224,7 @@ static void php_openssl_init_server_reneg_limit(php_stream *stream, php_openssl_
 }
 /* }}} */
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined (LIBRESSL_VERSION_NUMBER)
+#if PHP_OPENSSL_API_VERSION < 0x10100
 static RSA *php_openssl_tmp_rsa_cb(SSL *s, int is_export, int keylength)
 {
 	BIGNUM *bn = NULL;
@@ -1178,7 +1265,10 @@ static int php_openssl_set_server_dh_param(php_stream * stream, SSL_CTX *ctx) /*
 		return SUCCESS;
 	}
 
-	convert_to_string_ex(zdhpath);
+	if (!try_convert_to_string(zdhpath)) {
+		return FAILURE;
+	}
+
 	bio = BIO_new_file(Z_STRVAL_P(zdhpath), PHP_OPENSSL_BIO_MODE_R(PKCS7_BINARY));
 
 	if (bio == NULL) {
@@ -1206,7 +1296,7 @@ static int php_openssl_set_server_dh_param(php_stream * stream, SSL_CTX *ctx) /*
 }
 /* }}} */
 
-#if defined(HAVE_ECDH) && (OPENSSL_VERSION_NUMBER < 0x10100000L || defined (LIBRESSL_VERSION_NUMBER))
+#if defined(HAVE_ECDH) && PHP_OPENSSL_API_VERSION < 0x10100
 static int php_openssl_set_server_ecdh_curve(php_stream *stream, SSL_CTX *ctx) /* {{{ */
 {
 	zval *zvcurve;
@@ -1222,7 +1312,10 @@ static int php_openssl_set_server_ecdh_curve(php_stream *stream, SSL_CTX *ctx) /
 		curve_nid = NID_X9_62_prime256v1;
 #endif
 	} else {
-		convert_to_string_ex(zvcurve);
+		if (!try_convert_to_string(zvcurve)) {
+			return FAILURE;
+		}
+
 		curve_nid = OBJ_sn2nid(Z_STRVAL_P(zvcurve));
 		if (curve_nid == NID_undef) {
 			php_error_docref(NULL, E_WARNING, "invalid ecdh_curve specified");
@@ -1249,13 +1342,13 @@ static int php_openssl_set_server_specific_opts(php_stream *stream, SSL_CTX *ctx
 	zval *zv;
 	long ssl_ctx_options = SSL_CTX_get_options(ctx);
 
-#if defined(HAVE_ECDH) && (OPENSSL_VERSION_NUMBER < 0x10100000L || defined (LIBRESSL_VERSION_NUMBER))
+#if defined(HAVE_ECDH) && PHP_OPENSSL_API_VERSION < 0x10100
 	if (php_openssl_set_server_ecdh_curve(stream, ctx) == FAILURE) {
 		return FAILURE;
 	}
 #endif
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined (LIBRESSL_VERSION_NUMBER)
+#if PHP_OPENSSL_API_VERSION < 0x10100
 	SSL_CTX_set_tmp_rsa_callback(ctx, php_openssl_tmp_rsa_cb);
 #endif
 	/* We now use php_openssl_tmp_rsa_cb to generate a key of appropriate size whenever necessary */
@@ -1392,6 +1485,7 @@ static int php_openssl_enable_server_sni(php_stream *stream, php_openssl_netstre
 
 		if (Z_TYPE_P(current) == IS_ARRAY) {
 			zval *local_pk, *local_cert;
+			zend_string *local_pk_str, *local_cert_str;
 			char resolved_cert_path_buff[MAXPATHLEN], resolved_pk_path_buff[MAXPATHLEN];
 
 			local_cert = zend_hash_str_find(Z_ARRVAL_P(current), "local_cert", sizeof("local_cert")-1);
@@ -1401,14 +1495,21 @@ static int php_openssl_enable_server_sni(php_stream *stream, php_openssl_netstre
 				);
 				return FAILURE;
 			}
-			convert_to_string_ex(local_cert);
-			if (!VCWD_REALPATH(Z_STRVAL_P(local_cert), resolved_cert_path_buff)) {
-				php_error_docref(NULL, E_WARNING,
-					"failed setting local cert chain file `%s'; file not found",
-					Z_STRVAL_P(local_cert)
-				);
+
+			local_cert_str = zval_try_get_string(local_cert);
+			if (UNEXPECTED(!local_cert_str)) {
 				return FAILURE;
 			}
+			if (!VCWD_REALPATH(ZSTR_VAL(local_cert_str), resolved_cert_path_buff)) {
+				php_error_docref(NULL, E_WARNING,
+					"failed setting local cert chain file `%s'; file not found",
+					ZSTR_VAL(local_cert_str)
+				);
+				zend_string_release(local_cert_str);
+				return FAILURE;
+			}
+			zend_string_release(local_cert_str);
+
 			local_pk = zend_hash_str_find(Z_ARRVAL_P(current), "local_pk", sizeof("local_pk")-1);
 			if (local_pk == NULL) {
 				php_error_docref(NULL, E_WARNING,
@@ -1416,14 +1517,20 @@ static int php_openssl_enable_server_sni(php_stream *stream, php_openssl_netstre
 				);
 				return FAILURE;
 			}
-			convert_to_string_ex(local_pk);
-			if (!VCWD_REALPATH(Z_STRVAL_P(local_pk), resolved_pk_path_buff)) {
-				php_error_docref(NULL, E_WARNING,
-					"failed setting local private key file `%s'; file not found",
-					Z_STRVAL_P(local_pk)
-				);
+
+			local_pk_str = zval_try_get_string(local_pk);
+			if (UNEXPECTED(!local_pk_str)) {
 				return FAILURE;
 			}
+			if (!VCWD_REALPATH(ZSTR_VAL(local_pk_str), resolved_pk_path_buff)) {
+				php_error_docref(NULL, E_WARNING,
+					"failed setting local private key file `%s'; file not found",
+					ZSTR_VAL(local_pk_str)
+				);
+				zend_string_release(local_pk_str);
+				return FAILURE;
+			}
+			zend_string_release(local_pk_str);
 
 			ctx = php_openssl_create_sni_server_ctx(resolved_cert_path_buff, resolved_pk_path_buff);
 
@@ -1538,6 +1645,8 @@ int php_openssl_setup_crypto(php_stream *stream,
 	const SSL_METHOD *method;
 	int ssl_ctx_options;
 	int method_flags;
+	zend_long min_version = 0;
+	zend_long max_version = 0;
 	char *cipherlist = NULL;
 	char *alpn_protocols = NULL;
 	zval *val;
@@ -1558,22 +1667,17 @@ int php_openssl_setup_crypto(php_stream *stream,
 	sslsock->is_client = cparam->inputs.method & STREAM_CRYPTO_IS_CLIENT;
 	method_flags = ((cparam->inputs.method >> 1) << 1);
 
-	/* Should we use a specific crypto method or is generic SSLv23 okay? */
-	if ((method_flags & (method_flags-1)) == 0) {
-		ssl_ctx_options = SSL_OP_ALL;
-		method = php_openssl_select_crypto_method(method_flags, sslsock->is_client);
-		if (method == NULL) {
-			return FAILURE;
-		}
-	} else {
-		method = sslsock->is_client ? SSLv23_client_method() : SSLv23_server_method();
-		ssl_ctx_options = php_openssl_get_crypto_method_ctx_flags(method_flags);
-		if (ssl_ctx_options == -1) {
-			return FAILURE;
-		}
-	}
-
+	method = sslsock->is_client ? SSLv23_client_method() : SSLv23_server_method();
 	sslsock->ctx = SSL_CTX_new(method);
+
+	GET_VER_OPT_LONG("min_proto_version", min_version);
+	GET_VER_OPT_LONG("max_proto_version", max_version);
+	method_flags = php_openssl_get_proto_version_flags(method_flags, min_version, max_version);
+#if PHP_OPENSSL_API_VERSION < 0x10100
+	ssl_ctx_options = php_openssl_get_crypto_method_ctx_flags(method_flags);
+#else
+	ssl_ctx_options = SSL_OP_ALL;
+#endif
 
 	if (sslsock->ctx == NULL) {
 		php_error_docref(NULL, E_WARNING, "SSL context creation failure");
@@ -1663,6 +1767,11 @@ int php_openssl_setup_crypto(php_stream *stream,
 
 	SSL_CTX_set_options(sslsock->ctx, ssl_ctx_options);
 
+#if PHP_OPENSSL_API_VERSION >= 0x10100
+	SSL_CTX_set_min_proto_version(sslsock->ctx, php_openssl_get_min_proto_version(method_flags));
+	SSL_CTX_set_max_proto_version(sslsock->ctx, php_openssl_get_max_proto_version(method_flags));
+#endif
+
 	if (sslsock->is_client == 0 &&
 		PHP_STREAM_CONTEXT(stream) &&
 		FAILURE == php_openssl_set_server_specific_opts(stream, sslsock->ctx)
@@ -1730,6 +1839,11 @@ static zend_array *php_openssl_capture_session_meta(SSL *ssl_handle) /* {{{ */
 	char version_str[PHP_SSL_MAX_VERSION_LEN];
 
 	switch (proto) {
+#ifdef HAVE_TLS13
+		case TLS1_3_VERSION:
+			proto_str = "TLSv1.3";
+			break;
+#endif
 #ifdef HAVE_TLS12
 		case TLS1_2_VERSION:
 			proto_str = "TLSv1.2";
@@ -1815,7 +1929,7 @@ static int php_openssl_enable_crypto(php_stream *stream,
 {
 	int n;
 	int retry = 1;
-	int cert_captured;
+	int cert_captured = 0;
 	X509 *peer_cert;
 
 	if (cparam->inputs.activate && !sslsock->ssl_active) {
@@ -2334,6 +2448,9 @@ static int php_openssl_sockop_set_option(php_stream *stream, int option, int val
 				array_init(&tmp);
 
 				switch (SSL_version(sslsock->ssl_handle)) {
+#ifdef HAVE_TLS13
+					case TLS1_3_VERSION: proto_str = "TLSv1.3"; break;
+#endif
 #ifdef HAVE_TLS12
 					case TLS1_2_VERSION: proto_str = "TLSv1.2"; break;
 #endif
@@ -2401,30 +2518,22 @@ static int php_openssl_sockop_set_option(php_stream *stream, int option, int val
 					alive = 0;
 				} else if (php_pollfd_for(sslsock->s.socket, PHP_POLLREADABLE|POLLPRI, &tv) > 0) {
 					if (sslsock->ssl_active) {
-						int n;
-
-						do {
-							n = SSL_peek(sslsock->ssl_handle, &buf, sizeof(buf));
-							if (n <= 0) {
-								int err = SSL_get_error(sslsock->ssl_handle, n);
-
-								if (err == SSL_ERROR_SYSCALL) {
+						int n = SSL_peek(sslsock->ssl_handle, &buf, sizeof(buf));
+						if (n <= 0) {
+							int err = SSL_get_error(sslsock->ssl_handle, n);
+							switch (err) {
+								case SSL_ERROR_SYSCALL:
 									alive = php_socket_errno() == EAGAIN;
 									break;
-								}
-
-								if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-									/* re-negotiate */
-									continue;
-								}
-
-								/* any other problem is a fatal error */
-								alive = 0;
+								case SSL_ERROR_WANT_READ:
+								case SSL_ERROR_WANT_WRITE:
+									alive = 1;
+									break;
+								default:
+									/* any other problem is a fatal error */
+									alive = 0;
 							}
-							/* either peek succeeded or there was an error; we
-							 * have set the alive flag appropriately */
-							break;
-						} while (1);
+						}
 					} else if (0 == recv(sslsock->s.socket, &buf, sizeof(buf), MSG_PEEK) && php_socket_errno() != EAGAIN) {
 						alive = 0;
 					}
@@ -2682,6 +2791,16 @@ php_stream *php_openssl_ssl_socket_factory(const char *proto, size_t protolen,
 		php_stream_close(stream);
 		return NULL;
 #endif
+	} else if (strncmp(proto, "tlsv1.3", protolen) == 0) {
+#ifdef HAVE_TLS13
+		sslsock->enable_on_connect = 1;
+		sslsock->method = STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT;
+#else
+		php_error_docref(NULL, E_WARNING,
+			"TLSv1.3 support is not compiled into the OpenSSL library against which PHP is linked");
+		php_stream_close(stream);
+		return NULL;
+#endif
 	}
 
 	sslsock->url_name = php_openssl_get_url_name(resourcename, resourcenamelen, !!persistent_id);
@@ -2689,12 +2808,3 @@ php_stream *php_openssl_ssl_socket_factory(const char *proto, size_t protolen,
 	return stream;
 }
 /* }}} */
-
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * End:
- * vim600: noet sw=4 ts=4 fdm=marker
- * vim<600: noet sw=4 ts=4
- */

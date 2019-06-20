@@ -2,7 +2,7 @@
    +----------------------------------------------------------------------+
    | Zend Engine                                                          |
    +----------------------------------------------------------------------+
-   | Copyright (c) 1998-2018 Zend Technologies Ltd. (http://www.zend.com) |
+   | Copyright (c) Zend Technologies Ltd. (http://www.zend.com)           |
    +----------------------------------------------------------------------+
    | This source file is subject to version 2.00 of the Zend license,     |
    | that is bundled with this package in the file LICENSE, and is        |
@@ -12,13 +12,11 @@
    | obtain it through the world-wide-web, please send a note to          |
    | license@zend.com so we can mail you a copy immediately.              |
    +----------------------------------------------------------------------+
-   | Authors: Andi Gutmans <andi@zend.com>                                |
-   |          Zeev Suraski <zeev@zend.com>                                |
-   |          Dmitry Stogov <dmitry@zend.com>                             |
+   | Authors: Andi Gutmans <andi@php.net>                                 |
+   |          Zeev Suraski <zeev@php.net>                                 |
+   |          Dmitry Stogov <dmitry@php.net>                              |
    +----------------------------------------------------------------------+
 */
-
-/* $Id$ */
 
 #ifndef ZEND_OPERATORS_H
 #define ZEND_OPERATORS_H
@@ -26,10 +24,7 @@
 #include <errno.h>
 #include <math.h>
 #include <assert.h>
-
-#ifdef __GNUC__
 #include <stddef.h>
-#endif
 
 #ifdef HAVE_IEEEFP_H
 #include <ieeefp.h>
@@ -59,7 +54,7 @@ ZEND_API int ZEND_FASTCALL shift_left_function(zval *result, zval *op1, zval *op
 ZEND_API int ZEND_FASTCALL shift_right_function(zval *result, zval *op1, zval *op2);
 ZEND_API int ZEND_FASTCALL concat_function(zval *result, zval *op1, zval *op2);
 
-ZEND_API int ZEND_FASTCALL zend_is_identical(zval *op1, zval *op2);
+ZEND_API zend_bool ZEND_FASTCALL zend_is_identical(zval *op1, zval *op2);
 
 ZEND_API int ZEND_FASTCALL is_equal_function(zval *result, zval *op1, zval *op2);
 ZEND_API int ZEND_FASTCALL is_identical_function(zval *result, zval *op1, zval *op2);
@@ -247,8 +242,8 @@ ZEND_API int ZEND_FASTCALL increment_function(zval *op1);
 ZEND_API int ZEND_FASTCALL decrement_function(zval *op2);
 
 ZEND_API void ZEND_FASTCALL convert_scalar_to_number(zval *op);
-ZEND_API void ZEND_FASTCALL _convert_to_cstring(zval *op ZEND_FILE_LINE_DC);
-ZEND_API void ZEND_FASTCALL _convert_to_string(zval *op ZEND_FILE_LINE_DC);
+ZEND_API void ZEND_FASTCALL _convert_to_cstring(zval *op);
+ZEND_API void ZEND_FASTCALL _convert_to_string(zval *op);
 ZEND_API void ZEND_FASTCALL convert_to_long(zval *op);
 ZEND_API void ZEND_FASTCALL convert_to_double(zval *op);
 ZEND_API void ZEND_FASTCALL convert_to_long_base(zval *op, int base);
@@ -263,6 +258,7 @@ ZEND_API void multi_convert_to_string_ex(int argc, ...);
 ZEND_API zend_long    ZEND_FASTCALL zval_get_long_func(zval *op);
 ZEND_API double       ZEND_FASTCALL zval_get_double_func(zval *op);
 ZEND_API zend_string* ZEND_FASTCALL zval_get_string_func(zval *op);
+ZEND_API zend_string* ZEND_FASTCALL zval_try_get_string_func(zval *op);
 
 static zend_always_inline zend_long zval_get_long(zval *op) {
 	return EXPECTED(Z_TYPE_P(op) == IS_LONG) ? Z_LVAL_P(op) : zval_get_long_func(op);
@@ -284,8 +280,41 @@ static zend_always_inline zend_string *zval_get_tmp_string(zval *op, zend_string
 }
 static zend_always_inline void zend_tmp_string_release(zend_string *tmp) {
 	if (UNEXPECTED(tmp)) {
-		zend_string_release(tmp);
+		zend_string_release_ex(tmp, 0);
 	}
+}
+
+/* Like zval_get_string, but returns NULL if the conversion fails with an exception. */
+static zend_always_inline zend_string *zval_try_get_string(zval *op) {
+	if (EXPECTED(Z_TYPE_P(op) == IS_STRING)) {
+		zend_string *ret = zend_string_copy(Z_STR_P(op));
+		ZEND_ASSUME(ret != NULL);
+		return ret;
+	} else {
+		return zval_try_get_string_func(op);
+	}
+}
+
+/* Like zval_get_tmp_string, but returns NULL if the conversion fails with an exception. */
+static zend_always_inline zend_string *zval_try_get_tmp_string(zval *op, zend_string **tmp) {
+	if (EXPECTED(Z_TYPE_P(op) == IS_STRING)) {
+		zend_string *ret = Z_STR_P(op);
+		*tmp = NULL;
+		ZEND_ASSUME(ret != NULL);
+		return ret;
+	} else {
+		return *tmp = zval_try_get_string_func(op);
+	}
+}
+
+/* Like convert_to_string(), but returns whether the conversion succeeded and does not modify the
+ * zval in-place if it fails. */
+ZEND_API zend_bool ZEND_FASTCALL _try_convert_to_string(zval *op);
+static zend_always_inline zend_bool try_convert_to_string(zval *op) {
+	if (Z_TYPE_P(op) == IS_STRING) {
+		return 1;
+	}
+	return _try_convert_to_string(op);
 }
 
 /* Compatibility macros for 7.2 and below */
@@ -296,8 +325,8 @@ static zend_always_inline void zend_tmp_string_release(zend_string *tmp) {
 #define _zval_get_double_func(op) zval_get_double_func(op)
 #define _zval_get_string_func(op) zval_get_string_func(op)
 
-#define convert_to_cstring(op) if (Z_TYPE_P(op) != IS_STRING) { _convert_to_cstring((op) ZEND_FILE_LINE_CC); }
-#define convert_to_string(op) if (Z_TYPE_P(op) != IS_STRING) { _convert_to_string((op) ZEND_FILE_LINE_CC); }
+#define convert_to_cstring(op) if (Z_TYPE_P(op) != IS_STRING) { _convert_to_cstring((op)); }
+#define convert_to_string(op) if (Z_TYPE_P(op) != IS_STRING) { _convert_to_string((op)); }
 
 
 ZEND_API int ZEND_FASTCALL zend_is_true(zval *op);
@@ -437,7 +466,13 @@ ZEND_API void ZEND_FASTCALL zend_locale_sprintf_double(zval *op ZEND_FILE_LINE_D
 		convert_to_explicit_type(pzv, str_type);	\
 	}
 
-#define convert_to_boolean_ex(pzv)	convert_to_ex_master(pzv, boolean, _IS_BOOL)
+#define convert_to_boolean_ex(pzv)	do { \
+		if (Z_TYPE_INFO_P(pzv) > IS_TRUE) { \
+			convert_to_boolean(pzv); \
+		} else if (Z_TYPE_INFO_P(pzv) < IS_FALSE) { \
+			ZVAL_FALSE(pzv); \
+		} \
+	} while (0)
 #define convert_to_long_ex(pzv)		convert_to_ex_master(pzv, long, IS_LONG)
 #define convert_to_double_ex(pzv)	convert_to_ex_master(pzv, double, IS_DOUBLE)
 #define convert_to_string_ex(pzv)	convert_to_ex_master(pzv, string, IS_STRING)
@@ -450,7 +485,7 @@ ZEND_API void ZEND_FASTCALL zend_locale_sprintf_double(zval *op ZEND_FILE_LINE_D
 		convert_scalar_to_number(pzv);					\
 	}
 
-#if HAVE_SETLOCALE && defined(ZEND_WIN32) && !defined(ZTS) && defined(_MSC_VER)
+#if defined(ZEND_WIN32) && !defined(ZTS) && defined(_MSC_VER)
 /* This performance improvement of tolower() on Windows gives 10-18% on bench.php */
 #define ZEND_USE_TOLOWER_L 1
 #endif
@@ -467,9 +502,9 @@ ZEND_API void zend_update_current_locale(void);
 
 static zend_always_inline void fast_long_increment_function(zval *op1)
 {
-#if defined(HAVE_ASM_GOTO) && defined(__i386__)
+#if defined(HAVE_ASM_GOTO) && defined(__i386__) && !(4 == __GNUC__ && 8 == __GNUC_MINOR__)
 	__asm__ goto(
-		"incl (%0)\n\t"
+		"addl $1,(%0)\n\t"
 		"jo  %l1\n"
 		:
 		: "r"(&op1->value)
@@ -480,11 +515,24 @@ overflow: ZEND_ATTRIBUTE_COLD_LABEL
 	ZVAL_DOUBLE(op1, (double)ZEND_LONG_MAX + 1.0);
 #elif defined(HAVE_ASM_GOTO) && defined(__x86_64__)
 	__asm__ goto(
-		"incq (%0)\n\t"
+		"addq $1,(%0)\n\t"
 		"jo  %l1\n"
 		:
 		: "r"(&op1->value)
 		: "cc", "memory"
+		: overflow);
+	return;
+overflow: ZEND_ATTRIBUTE_COLD_LABEL
+	ZVAL_DOUBLE(op1, (double)ZEND_LONG_MAX + 1.0);
+#elif defined(HAVE_ASM_GOTO) && defined(__aarch64__)
+	__asm__ goto (
+		"ldr x5, [%0]\n\t"
+		"adds x5, x5, 1\n\t"
+		"bvs %l1\n"
+		"str x5, [%0]"
+		:
+		: "r"(&op1->value)
+		: "x5", "cc", "memory"
 		: overflow);
 	return;
 overflow: ZEND_ATTRIBUTE_COLD_LABEL
@@ -517,9 +565,9 @@ overflow: ZEND_ATTRIBUTE_COLD_LABEL
 
 static zend_always_inline void fast_long_decrement_function(zval *op1)
 {
-#if defined(HAVE_ASM_GOTO) && defined(__i386__)
+#if defined(HAVE_ASM_GOTO) && defined(__i386__) && !(4 == __GNUC__ && 8 == __GNUC_MINOR__)
 	__asm__ goto(
-		"decl (%0)\n\t"
+		"subl $1,(%0)\n\t"
 		"jo  %l1\n"
 		:
 		: "r"(&op1->value)
@@ -530,11 +578,24 @@ overflow: ZEND_ATTRIBUTE_COLD_LABEL
 	ZVAL_DOUBLE(op1, (double)ZEND_LONG_MIN - 1.0);
 #elif defined(HAVE_ASM_GOTO) && defined(__x86_64__)
 	__asm__ goto(
-		"decq (%0)\n\t"
+		"subq $1,(%0)\n\t"
 		"jo  %l1\n"
 		:
 		: "r"(&op1->value)
 		: "cc", "memory"
+		: overflow);
+	return;
+overflow: ZEND_ATTRIBUTE_COLD_LABEL
+	ZVAL_DOUBLE(op1, (double)ZEND_LONG_MIN - 1.0);
+#elif defined(HAVE_ASM_GOTO) && defined(__aarch64__)
+	__asm__ goto (
+		"ldr x5, [%0]\n\t"
+		"subs x5 ,x5, 1\n\t"
+		"bvs %l1\n"
+		"str x5, [%0]"
+		:
+		: "r"(&op1->value)
+		: "x5", "cc", "memory"
 		: overflow);
 	return;
 overflow: ZEND_ATTRIBUTE_COLD_LABEL
@@ -567,7 +628,7 @@ overflow: ZEND_ATTRIBUTE_COLD_LABEL
 
 static zend_always_inline void fast_long_add_function(zval *result, zval *op1, zval *op2)
 {
-#if defined(HAVE_ASM_GOTO) && defined(__i386__)
+#if defined(HAVE_ASM_GOTO) && defined(__i386__) && !(4 == __GNUC__ && 8 == __GNUC_MINOR__)
 	__asm__ goto(
 		"movl	(%1), %%eax\n\t"
 		"addl   (%2), %%eax\n\t"
@@ -599,6 +660,26 @@ overflow: ZEND_ATTRIBUTE_COLD_LABEL
 		  "n"(IS_LONG),
 		  "n"(ZVAL_OFFSETOF_TYPE)
 		: "rax","cc", "memory"
+		: overflow);
+	return;
+overflow: ZEND_ATTRIBUTE_COLD_LABEL
+	ZVAL_DOUBLE(result, (double) Z_LVAL_P(op1) + (double) Z_LVAL_P(op2));
+#elif defined(HAVE_ASM_GOTO) && defined(__aarch64__)
+	__asm__ goto(
+		"ldr    x5, [%1]\n\t"
+		"ldr    x6, [%2]\n\t"
+		"adds	x5, x5, x6\n\t"
+		"bvs	%l5\n\t"
+		"mov	w6, %3\n\t"
+		"str	x5, [%0]\n\t"
+		"str	w6, [%0, %c4]\n"
+		:
+		: "r"(&result->value),
+		  "r"(&op1->value),
+		  "r"(&op2->value),
+		  "n"(IS_LONG),
+		  "n"(ZVAL_OFFSETOF_TYPE)
+		: "x5", "x6", "cc", "memory"
 		: overflow);
 	return;
 overflow: ZEND_ATTRIBUTE_COLD_LABEL
@@ -657,7 +738,7 @@ static zend_always_inline int fast_add_function(zval *result, zval *op1, zval *o
 
 static zend_always_inline void fast_long_sub_function(zval *result, zval *op1, zval *op2)
 {
-#if defined(HAVE_ASM_GOTO) && defined(__i386__)
+#if defined(HAVE_ASM_GOTO) && defined(__i386__) && !(4 == __GNUC__ && 8 == __GNUC_MINOR__)
 	__asm__ goto(
 		"movl	(%1), %%eax\n\t"
 		"subl   (%2), %%eax\n\t"
@@ -689,6 +770,26 @@ overflow: ZEND_ATTRIBUTE_COLD_LABEL
 		  "n"(IS_LONG),
 		  "n"(ZVAL_OFFSETOF_TYPE)
 		: "rax","cc", "memory"
+		: overflow);
+	return;
+overflow: ZEND_ATTRIBUTE_COLD_LABEL
+	ZVAL_DOUBLE(result, (double) Z_LVAL_P(op1) - (double) Z_LVAL_P(op2));
+#elif defined(HAVE_ASM_GOTO) && defined(__aarch64__)
+	__asm__ goto(
+		"ldr    x5, [%1]\n\t"
+		"ldr    x6, [%2]\n\t"
+		"subs	x5, x5, x6\n\t"
+		"bvs	%l5\n\t"
+		"mov	w6, %3\n\t"
+		"str	x5, [%0]\n\t"
+		"str	w6, [%0, %c4]\n"
+		:
+		: "r"(&result->value),
+		  "r"(&op1->value),
+		  "r"(&op2->value),
+		  "n"(IS_LONG),
+		  "n"(ZVAL_OFFSETOF_TYPE)
+		: "x5", "x6", "cc", "memory"
 		: overflow);
 	return;
 overflow: ZEND_ATTRIBUTE_COLD_LABEL
@@ -777,7 +878,7 @@ static zend_always_inline int fast_equal_check_string(zval *op1, zval *op2)
 	return Z_LVAL(result) == 0;
 }
 
-static zend_always_inline int fast_is_identical_function(zval *op1, zval *op2)
+static zend_always_inline zend_bool fast_is_identical_function(zval *op1, zval *op2)
 {
 	if (Z_TYPE_P(op1) != Z_TYPE_P(op2)) {
 		return 0;
@@ -787,7 +888,7 @@ static zend_always_inline int fast_is_identical_function(zval *op1, zval *op2)
 	return zend_is_identical(op1, op2);
 }
 
-static zend_always_inline int fast_is_not_identical_function(zval *op1, zval *op2)
+static zend_always_inline zend_bool fast_is_not_identical_function(zval *op1, zval *op2)
 {
 	if (Z_TYPE_P(op1) != Z_TYPE_P(op2)) {
 		return 1;
@@ -798,19 +899,7 @@ static zend_always_inline int fast_is_not_identical_function(zval *op1, zval *op
 }
 
 #define ZEND_TRY_BINARY_OP1_OBJECT_OPERATION(opcode, binary_op)                                            \
-	if (UNEXPECTED(Z_TYPE_P(op1) == IS_OBJECT)                                                             \
-		&& op1 == result                                                                                   \
-		&& UNEXPECTED(Z_OBJ_HANDLER_P(op1, get))                                                           \
-		&& EXPECTED(Z_OBJ_HANDLER_P(op1, set))) {                                                          \
-		int ret;                                                                                           \
-		zval rv;                                                                                           \
-		zval *objval = Z_OBJ_HANDLER_P(op1, get)(op1, &rv);                                      \
-		Z_TRY_ADDREF_P(objval);                                                                                \
-		ret = binary_op(objval, objval, op2);                                                    \
-		Z_OBJ_HANDLER_P(op1, set)(op1, objval);                                                  \
-		zval_ptr_dtor(objval);                                                                             \
-		return ret;                                                                                        \
-	} else if (UNEXPECTED(Z_TYPE_P(op1) == IS_OBJECT)                                                      \
+	if (UNEXPECTED(Z_TYPE_P(op1) == IS_OBJECT)                                                      \
 		&& UNEXPECTED(Z_OBJ_HANDLER_P(op1, do_operation))) {                                               \
 		if (EXPECTED(SUCCESS == Z_OBJ_HANDLER_P(op1, do_operation)(opcode, result, op1, op2))) { \
 			return SUCCESS;                                                                                \
@@ -874,13 +963,3 @@ static zend_always_inline void zend_unwrap_reference(zval *op) /* {{{ */
 END_EXTERN_C()
 
 #endif
-
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * indent-tabs-mode: t
- * End:
- * vim600: sw=4 ts=4 fdm=marker
- * vim<600: sw=4 ts=4
- */

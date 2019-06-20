@@ -2,7 +2,7 @@
    +----------------------------------------------------------------------+
    | PHP Version 7                                                        |
    +----------------------------------------------------------------------+
-   | Copyright (c) 1997-2018 The PHP Group                                |
+   | Copyright (c) The PHP Group                                          |
    +----------------------------------------------------------------------+
    | This source file is subject to version 3.01 of the PHP license,      |
    | that is bundled with this package in the file LICENSE, and is        |
@@ -16,16 +16,11 @@
    +----------------------------------------------------------------------+
  */
 
-/* $Id$ */
-
 #ifndef PHP_SESSION_H
 #define PHP_SESSION_H
 
 #include "ext/standard/php_var.h"
-
-#if defined(HAVE_HASH_EXT) && !defined(COMPILE_DL_HASH)
-# include "ext/hash/php_hash.h"
-#endif
+#include "ext/hash/php_hash.h"
 
 #define PHP_SESSION_API 20161017
 
@@ -157,6 +152,7 @@ typedef struct _php_ps_globals {
 	char *cookie_domain;
 	zend_bool  cookie_secure;
 	zend_bool  cookie_httponly;
+	char *cookie_samesite;
 	const ps_module *mod;
 	const ps_module *default_mod;
 	void *mod_data;

@@ -2,7 +2,7 @@
   +----------------------------------------------------------------------+
   | PHP Version 7                                                        |
   +----------------------------------------------------------------------+
-  | Copyright (c) 1997-2018 The PHP Group                                |
+  | Copyright (c) The PHP Group                                          |
   +----------------------------------------------------------------------+
   | This source file is subject to version 3.01 of the PHP license,      |
   | that is bundled with this package in the file LICENSE, and is        |
@@ -465,34 +465,43 @@ static int firebird_handle_set_attribute(pdo_dbh_t *dbh, zend_long attr, zval *v
 
 		case PDO_FB_ATTR_DATE_FORMAT:
 			{
-				zend_string *str = zval_get_string(val);
+				zend_string *str = zval_try_get_string(val);
+				if (UNEXPECTED(!str)) {
+					return 0;
+				}
 				if (H->date_format) {
 					efree(H->date_format);
 				}
 				spprintf(&H->date_format, 0, "%s", ZSTR_VAL(str));
-				zend_string_release(str);
+				zend_string_release_ex(str, 0);
 			}
 			return 1;
 
 		case PDO_FB_ATTR_TIME_FORMAT:
 			{
-				zend_string *str = zval_get_string(val);
+				zend_string *str = zval_try_get_string(val);
+				if (UNEXPECTED(!str)) {
+					return 0;
+				}
 				if (H->time_format) {
 					efree(H->time_format);
 				}
 				spprintf(&H->time_format, 0, "%s", ZSTR_VAL(str));
-				zend_string_release(str);
+				zend_string_release_ex(str, 0);
 			}
 			return 1;
 
 		case PDO_FB_ATTR_TIMESTAMP_FORMAT:
 			{
-				zend_string *str = zval_get_string(val);
+				zend_string *str = zval_try_get_string(val);
+				if (UNEXPECTED(!str)) {
+					return 0;
+				}
 				if (H->timestamp_format) {
 					efree(H->timestamp_format);
 				}
 				spprintf(&H->timestamp_format, 0, "%s", ZSTR_VAL(str));
-				zend_string_release(str);
+				zend_string_release_ex(str, 0);
 			}
 			return 1;
 	}
@@ -545,9 +554,6 @@ static int firebird_handle_get_attribute(pdo_dbh_t *dbh, zend_long attr, zval *v
 				info_func(tmp);
 				ZVAL_STRING(val, tmp);
 			}
-#ifdef PHP_WIN32
-			FreeLibrary(l);
-#endif
 #else
 			ZVAL_NULL(val);
 #endif
@@ -685,12 +691,3 @@ const pdo_driver_t pdo_firebird_driver = { /* {{{ */
 	pdo_firebird_handle_factory
 };
 /* }}} */
-
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * End:
- * vim600: noet sw=4 ts=4 fdm=marker
- * vim<600: noet sw=4 ts=4
- */

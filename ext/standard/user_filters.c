@@ -2,7 +2,7 @@
    +----------------------------------------------------------------------+
    | PHP Version 7                                                        |
    +----------------------------------------------------------------------+
-   | Copyright (c) 1997-2018 The PHP Group                                |
+   | Copyright (c) The PHP Group                                          |
    +----------------------------------------------------------------------+
    | This source file is subject to version 3.01 of the PHP license,      |
    | that is bundled with this package in the file LICENSE, and is        |
@@ -17,8 +17,6 @@
    | Sara Golemon (pollita@php.net)                                       |
    +----------------------------------------------------------------------+
 */
-
-/* $Id$ */
 
 #include "php.h"
 #include "php_globals.h"
@@ -139,11 +137,10 @@ static void userfilter_dtor(php_stream_filter *thisfilter)
 
 	ZVAL_STRINGL(&func_name, "onclose", sizeof("onclose")-1);
 
-	call_user_function_ex(NULL,
+	call_user_function(NULL,
 			obj,
 			&func_name,
 			&retval,
-			0, NULL,
 			0, NULL);
 
 	zval_ptr_dtor(&retval);
@@ -167,7 +164,7 @@ php_stream_filter_status_t userfilter_filter(
 	zval func_name;
 	zval retval;
 	zval args[4];
-	zval zpropname;
+	zend_string *propname;
 	int call_result;
 
 	/* the userfilter object probably doesn't exist anymore */
@@ -242,9 +239,9 @@ php_stream_filter_status_t userfilter_filter(
 	/* filter resources are cleaned up by the stream destructor,
 	 * keeping a reference to the stream resource here would prevent it
 	 * from being destroyed properly */
-	ZVAL_STRINGL(&zpropname, "stream", sizeof("stream")-1);
-	Z_OBJ_HANDLER_P(obj, unset_property)(obj, &zpropname, NULL);
-	zval_ptr_dtor(&zpropname);
+	propname = zend_string_init("stream", sizeof("stream")-1, 0);
+	Z_OBJ_HANDLER_P(obj, unset_property)(Z_OBJ_P(obj), propname, NULL);
+	zend_string_release_ex(propname, 0);
 
 	zval_ptr_dtor(&args[3]);
 	zval_ptr_dtor(&args[2]);
@@ -344,11 +341,10 @@ static php_stream_filter *user_filter_factory_create(const char *filtername,
 	/* invoke the constructor */
 	ZVAL_STRINGL(&func_name, "oncreate", sizeof("oncreate")-1);
 
-	call_user_function_ex(NULL,
+	call_user_function(NULL,
 			&obj,
 			&func_name,
 			&retval,
-			0, NULL,
 			0, NULL);
 
 	if (Z_TYPE(retval) != IS_UNDEF) {
@@ -372,7 +368,7 @@ static php_stream_filter *user_filter_factory_create(const char *filtername,
 
 	/* set the filter property, this will be used during cleanup */
 	ZVAL_RES(&zfilter, zend_register_resource(filter, le_userfilters));
-	ZVAL_COPY_VALUE(&filter->abstract, &obj);
+	ZVAL_OBJ(&filter->abstract, Z_OBJ(obj));
 	add_property_zval(&obj, "filter", &zfilter);
 	/* add_property_zval increments the refcount which is unwanted here */
 	zval_ptr_dtor(&zfilter);
@@ -387,11 +383,11 @@ static const php_stream_filter_factory user_filter_factory = {
 static void filter_item_dtor(zval *zv)
 {
 	struct php_user_filter_data *fdat = Z_PTR_P(zv);
-	zend_string_release(fdat->classname);
+	zend_string_release_ex(fdat->classname, 0);
 	efree(fdat);
 }
 
-/* {{{ proto object stream_bucket_make_writeable(resource brigade)
+/* {{{ proto object|false stream_bucket_make_writeable(resource brigade)
    Return a bucket object from the brigade for operating on */
 PHP_FUNCTION(stream_bucket_make_writeable)
 {
@@ -590,18 +586,8 @@ PHP_FUNCTION(stream_filter_register)
 			php_stream_filter_register_factory_volatile(filtername, &user_filter_factory) == SUCCESS) {
 		RETVAL_TRUE;
 	} else {
-		zend_string_release(classname);
+		zend_string_release_ex(classname, 0);
 		efree(fdat);
 	}
 }
 /* }}} */
-
-
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * End:
- * vim600: sw=4 ts=4 fdm=marker
- * vim<600: sw=4 ts=4
- */

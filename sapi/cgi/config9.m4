@@ -1,13 +1,10 @@
-dnl
-dnl $Id$
-dnl
+PHP_ARG_ENABLE([cgi],,
+  [AS_HELP_STRING([--disable-cgi],
+    [Disable building CGI version of PHP])],
+  [yes],
+  [no])
 
-PHP_ARG_ENABLE(cgi,,
-[  --disable-cgi           Disable building CGI version of PHP], yes, no)
-
-dnl
-dnl CGI setup
-dnl
+dnl CGI setup.
 AC_MSG_CHECKING(for CGI build)
 if test "$PHP_CGI" != "no"; then
     AC_MSG_RESULT(yes)
@@ -39,7 +36,7 @@ if test "$PHP_CGI" != "no"; then
 
     PHP_ADD_MAKEFILE_FRAGMENT($abs_srcdir/sapi/cgi/Makefile.frag)
 
-    dnl Set filename
+    dnl Set filename.
     case $host_alias in
       *cygwin* )
         SAPI_CGI_PATH=sapi/cgi/php-cgi.exe
@@ -49,7 +46,7 @@ if test "$PHP_CGI" != "no"; then
         ;;
     esac
 
-    dnl Select SAPI
+    dnl Select SAPI.
     PHP_SELECT_SAPI(cgi, program, cgi_main.c, -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1, '$(SAPI_CGI_PATH)')
 
     case $host_alias in
@@ -68,7 +65,7 @@ if test "$PHP_CGI" != "no"; then
       ;;
     esac
 
-    dnl Expose to Makefile
+    dnl Expose to Makefile.
     PHP_SUBST(SAPI_CGI_PATH)
     PHP_SUBST(BUILD_CGI)
 

@@ -2,7 +2,7 @@
    +----------------------------------------------------------------------+
    | PHP Version 7                                                        |
    +----------------------------------------------------------------------+
-   | Copyright (c) 1997-2018 The PHP Group                                |
+   | Copyright (c) The PHP Group                                          |
    +----------------------------------------------------------------------+
    | This source file is subject to version 3.01 of the PHP license,      |
    | that is bundled with this package in the file LICENSE, and is        |
@@ -16,8 +16,6 @@
    +----------------------------------------------------------------------+
  */
 
-/* $Id$ */
-
 /* {{{ includes/startup/misc */
 
 #include "php.h"
@@ -27,10 +25,6 @@
 #include "php_string.h"
 #include "php_scandir.h"
 #include "basic_functions.h"
-
-#ifdef HAVE_DIRENT_H
-#include <dirent.h>
-#endif
 
 #if HAVE_UNISTD_H
 #include <unistd.h>
@@ -245,7 +239,7 @@ static void _php_do_opendir(INTERNAL_FUNCTION_PARAMETERS, int createobject)
 }
 /* }}} */
 
-/* {{{ proto mixed opendir(string path[, resource context])
+/* {{{ proto resource|false opendir(string path[, resource context])
    Open a directory and return a dir_handle */
 PHP_FUNCTION(opendir)
 {
@@ -253,7 +247,7 @@ PHP_FUNCTION(opendir)
 }
 /* }}} */
 
-/* {{{ proto object dir(string directory[, resource context])
+/* {{{ proto objectđalse dir(string directory[, resource context])
    Directory class with properties, handle and class and methods read, rewind and close */
 PHP_FUNCTION(getdir)
 {
@@ -261,7 +255,7 @@ PHP_FUNCTION(getdir)
 }
 /* }}} */
 
-/* {{{ proto void closedir([resource dir_handle])
+/* {{{ proto bool closedir([resource dir_handle])
    Close directory connection identified by the dir_handle */
 PHP_FUNCTION(closedir)
 {
@@ -396,7 +390,7 @@ PHP_FUNCTION(rewinddir)
 }
 /* }}} */
 
-/* {{{ proto string readdir([resource dir_handle])
+/* {{{ proto string|false readdir([resource dir_handle])
    Read directory entry from dir_handle */
 PHP_NAMED_FUNCTION(php_if_readdir)
 {
@@ -419,7 +413,7 @@ PHP_NAMED_FUNCTION(php_if_readdir)
 /* }}} */
 
 #ifdef HAVE_GLOB
-/* {{{ proto array glob(string pattern [, int flags])
+/* {{{ proto array|false glob(string pattern [, int flags])
    Find pathnames matching a pattern */
 PHP_FUNCTION(glob)
 {
@@ -545,14 +539,14 @@ no_results:
 	globfree(&globbuf);
 
 	if (basedir_limit && !zend_hash_num_elements(Z_ARRVAL_P(return_value))) {
-		zval_dtor(return_value);
+		zend_array_destroy(Z_ARR_P(return_value));
 		RETURN_FALSE;
 	}
 }
 /* }}} */
 #endif
 
-/* {{{ proto array scandir(string dir [, int sorting_order [, resource context]])
+/* {{{ proto array|false scandir(string dir [, int sorting_order [, resource context]])
    List files & directories inside the specified path */
 PHP_FUNCTION(scandir)
 {
@@ -603,12 +597,3 @@ PHP_FUNCTION(scandir)
 	}
 }
 /* }}} */
-
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * End:
- * vim600: sw=4 ts=4 fdm=marker
- * vim<600: sw=4 ts=4
- */

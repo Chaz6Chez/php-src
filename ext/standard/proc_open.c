@@ -2,7 +2,7 @@
    +----------------------------------------------------------------------+
    | PHP Version 7                                                        |
    +----------------------------------------------------------------------+
-   | Copyright (c) 1997-2018 The PHP Group                                |
+   | Copyright (c) The PHP Group                                          |
    +----------------------------------------------------------------------+
    | This source file is subject to version 3.01 of the PHP license,      |
    | that is bundled with this package in the file LICENSE, and is        |
@@ -15,7 +15,6 @@
    | Author: Wez Furlong <wez@thebrainroom.com>                           |
    +----------------------------------------------------------------------+
  */
-/* $Id$ */
 
 #if 0 && (defined(__linux__) || defined(sun) || defined(__IRIX__))
 # define _BSD_SOURCE 		/* linux wants this when XOPEN mode is on */
@@ -39,9 +38,7 @@
 #if HAVE_SYS_WAIT_H
 #include <sys/wait.h>
 #endif
-#if HAVE_SIGNAL_H
 #include <signal.h>
-#endif
 
 #if HAVE_SYS_STAT_H
 #include <sys/stat.h>
@@ -104,7 +101,7 @@ static php_process_env_t _php_array_to_envp(zval *environment, int is_persistent
 		str = zval_get_string(element);
 
 		if (ZSTR_LEN(str) == 0) {
-			zend_string_release(str);
+			zend_string_release_ex(str, 0);
 			continue;
 		}
 
@@ -143,7 +140,7 @@ static php_process_env_t _php_array_to_envp(zval *environment, int is_persistent
 #endif
 			p += ZSTR_LEN(str) + 1;
 		}
-		zend_string_release(str);
+		zend_string_release_ex(str, 0);
 	} ZEND_HASH_FOREACH_END();
 
 	assert((uint32_t)(p - env.envp) <= sizeenv);
@@ -251,7 +248,7 @@ PHP_FUNCTION(proc_terminate)
 		Z_PARAM_RESOURCE(zproc)
 		Z_PARAM_OPTIONAL
 		Z_PARAM_LONG(sig_no)
-	ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
+	ZEND_PARSE_PARAMETERS_END();
 
 	if ((proc = (struct php_process_handle *)zend_fetch_resource(Z_RES_P(zproc), "process", le_proc_open)) == NULL) {
 		RETURN_FALSE;
@@ -273,7 +270,7 @@ PHP_FUNCTION(proc_terminate)
 }
 /* }}} */
 
-/* {{{ proto int proc_close(resource process)
+/* {{{ proto int|false proc_close(resource process)
    close a process opened by proc_open */
 PHP_FUNCTION(proc_close)
 {
@@ -282,7 +279,7 @@ PHP_FUNCTION(proc_close)
 
 	ZEND_PARSE_PARAMETERS_START(1, 1)
 		Z_PARAM_RESOURCE(zproc)
-	ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
+	ZEND_PARSE_PARAMETERS_END();
 
 	if ((proc = (struct php_process_handle *)zend_fetch_resource(Z_RES_P(zproc), "process", le_proc_open)) == NULL) {
 		RETURN_FALSE;
@@ -295,7 +292,7 @@ PHP_FUNCTION(proc_close)
 }
 /* }}} */
 
-/* {{{ proto array proc_get_status(resource process)
+/* {{{ proto array|false proc_get_status(resource process)
    get information about a process opened by proc_open */
 PHP_FUNCTION(proc_get_status)
 {
@@ -312,7 +309,7 @@ PHP_FUNCTION(proc_get_status)
 
 	ZEND_PARSE_PARAMETERS_START(1, 1)
 		Z_PARAM_RESOURCE(zproc)
-	ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
+	ZEND_PARSE_PARAMETERS_END();
 
 	if ((proc = (struct php_process_handle *)zend_fetch_resource(Z_RES_P(zproc), "process", le_proc_open)) == NULL) {
 		RETURN_FALSE;
@@ -402,7 +399,7 @@ struct php_proc_open_descriptor_item {
 };
 /* }}} */
 
-/* {{{ proto resource proc_open(string command, array descriptorspec, array &pipes [, string cwd [, array env [, array other_options]]])
+/* {{{ proto resource|false proc_open(string command, array descriptorspec, array &pipes [, string cwd [, array env [, array other_options]]])
    Run a process with more control over it's file descriptors */
 PHP_FUNCTION(proc_open)
 {
@@ -439,6 +436,7 @@ PHP_FUNCTION(proc_open)
 	int suppress_errors = 0;
 	int bypass_shell = 0;
 	int blocking_pipes = 0;
+	int create_process_group = 0;
 #endif
 #if PHP_CAN_DO_PTS
 	php_file_descriptor_t dev_ptmx = -1;	/* master */
@@ -448,7 +446,7 @@ PHP_FUNCTION(proc_open)
 	ZEND_PARSE_PARAMETERS_START(3, 6)
 		Z_PARAM_STRING(command, command_len)
 		Z_PARAM_ARRAY(descriptorspec)
-		Z_PARAM_ZVAL_DEREF(pipes)
+		Z_PARAM_ZVAL(pipes)
 		Z_PARAM_OPTIONAL
 		Z_PARAM_STRING_EX(cwd, cwd_len, 1, 0)
 		Z_PARAM_ARRAY_EX(environment, 1, 0)
@@ -477,6 +475,13 @@ PHP_FUNCTION(proc_open)
 		if (item != NULL) {
 			if (Z_TYPE_P(item) == IS_TRUE || ((Z_TYPE_P(item) == IS_LONG) && Z_LVAL_P(item))) {
 				blocking_pipes = 1;
+			}
+		}
+
+		item = zend_hash_str_find(Z_ARRVAL_P(other_options), "create_process_group", sizeof("create_process_group") - 1);
+		if (item != NULL) {
+			if (Z_TYPE_P(item) == IS_TRUE || ((Z_TYPE_P(item) == IS_LONG) && Z_LVAL_P(item))) {
+				create_process_group = 1;
 			}
 		}
 	}
@@ -547,7 +552,9 @@ PHP_FUNCTION(proc_open)
 		} else {
 
 			if ((ztype = zend_hash_index_find(Z_ARRVAL_P(descitem), 0)) != NULL) {
-				convert_to_string_ex(ztype);
+				if (!try_convert_to_string(ztype)) {
+					goto exit_fail;
+				}
 			} else {
 				php_error_docref(NULL, E_WARNING, "Missing handle qualifier in array");
 				goto exit_fail;
@@ -558,7 +565,9 @@ PHP_FUNCTION(proc_open)
 				zval *zmode;
 
 				if ((zmode = zend_hash_index_find(Z_ARRVAL_P(descitem), 1)) != NULL) {
-					convert_to_string_ex(zmode);
+					if (!try_convert_to_string(zmode)) {
+						goto exit_fail;
+					}
 				} else {
 					php_error_docref(NULL, E_WARNING, "Missing mode parameter for 'pipe'");
 					goto exit_fail;
@@ -597,14 +606,18 @@ PHP_FUNCTION(proc_open)
 				descriptors[ndesc].mode = DESC_FILE;
 
 				if ((zfile = zend_hash_index_find(Z_ARRVAL_P(descitem), 1)) != NULL) {
-					convert_to_string_ex(zfile);
+					if (!try_convert_to_string(zfile)) {
+						goto exit_fail;
+					}
 				} else {
 					php_error_docref(NULL, E_WARNING, "Missing file name parameter for 'file'");
 					goto exit_fail;
 				}
 
 				if ((zmode = zend_hash_index_find(Z_ARRVAL_P(descitem), 2)) != NULL) {
-					convert_to_string_ex(zmode);
+					if (!try_convert_to_string(zmode)) {
+						goto exit_fail;
+					}
 				} else {
 					php_error_docref(NULL, E_WARNING, "Missing mode parameter for 'file'");
 					goto exit_fail;
@@ -716,6 +729,9 @@ PHP_FUNCTION(proc_open)
 	dwCreateFlags = NORMAL_PRIORITY_CLASS;
 	if(strcmp(sapi_module.name, "cli") != 0) {
 		dwCreateFlags |= CREATE_NO_WINDOW;
+	}
+	if (create_process_group) {
+		dwCreateFlags |= CREATE_NEW_PROCESS_GROUP;
 	}
 
 	envpw = php_win32_cp_env_any_to_w(env.envp);
@@ -863,6 +879,11 @@ PHP_FUNCTION(proc_open)
 #endif
 	/* we forked/spawned and this is the parent */
 
+	pipes = zend_try_array_init(pipes);
+	if (!pipes) {
+		goto exit_fail;
+	}
+
 	proc = (struct php_process_handle*)pemalloc(sizeof(struct php_process_handle), is_persistent);
 	proc->is_persistent = is_persistent;
 	proc->command = command;
@@ -873,9 +894,6 @@ PHP_FUNCTION(proc_open)
 	proc->childHandle = childHandle;
 #endif
 	proc->env = env;
-
-	zval_ptr_dtor(pipes);
-	array_init(pipes);
 
 #if PHP_CAN_DO_PTS
 	if (dev_ptmx >= 0) {
@@ -969,12 +987,3 @@ exit_fail:
 /* }}} */
 
 #endif /* PHP_CAN_SUPPORT_PROC_OPEN */
-
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * End:
- * vim600: sw=4 ts=4 fdm=marker
- * vim<600: sw=4 ts=4
- */

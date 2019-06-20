@@ -5,7 +5,7 @@
  *  has been removed (MIME and file attachments).  This code was
  *  modified from code based on code written by Jarle Aase.
  *
- *  This class is based on the original code by Jarle Aase, see bellow:
+ *  This class is based on the original code by Jarle Aase, see below:
  *  wSendmail.cpp  It has been striped of some functionality to match
  *  the requirements of phpfi.
  *
@@ -17,8 +17,6 @@
  *
  */
 
-/* $Id$ */
-
 #include "php.h"				/*php specific */
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,7 +26,6 @@
 #include <string.h>
 #include <math.h>
 #include <malloc.h>
-#include <memory.h>
 #include <winbase.h>
 #include "sendmail.h"
 #include "php_ini.h"
@@ -50,7 +47,7 @@
 
 /* '*error_message' has to be passed around from php_mail() */
 #define SMTP_ERROR_RESPONSE_SPEC	"SMTP server response: %s"
-/* Convinient way to handle error messages from the SMTP server.
+/* Convenient way to handle error messages from the SMTP server.
    response is ecalloc()d in Ack() itself and efree()d here
    because the content is in *error_message now */
 #define SMTP_ERROR_RESPONSE(response)	{ \
@@ -144,8 +141,8 @@ static zend_string *php_win32_mail_trim_header(char *header)
 				  -1,
 				  NULL);
 
-	zend_string_release(replace);
-	zend_string_release(regex);
+	zend_string_release_ex(replace, 0);
+	zend_string_release_ex(regex, 0);
 
 	if (NULL == result) {
 		return NULL;
@@ -159,9 +156,9 @@ static zend_string *php_win32_mail_trim_header(char *header)
 				   replace,
 				  -1,
 				  NULL);
-	zend_string_release(replace);
-	zend_string_release(regex);
-	zend_string_release(result);
+	zend_string_release_ex(replace, 0);
+	zend_string_release_ex(regex, 0);
+	zend_string_release_ex(result, 0);
 
 	return result2;
 }
@@ -211,7 +208,7 @@ PHPAPI int TSendMail(char *host, int *error, char **error_message,
 		 * insensitive when searching for a pattern. */
 		headers_lc = zend_string_tolower(headers_trim);
 		if (headers_lc == headers_trim) {
-			zend_string_release(headers_lc);
+			zend_string_release_ex(headers_lc, 0);
 		}
 	}
 
@@ -254,8 +251,9 @@ PHPAPI int TSendMail(char *host, int *error, char **error_message,
 		}
 
 		if (!found) {
-			if (headers_lc) {
-				zend_string_free(headers_lc);
+			if (headers) {
+				zend_string_release(headers_trim);
+				zend_string_release(headers_lc);
 			}
 			*error = W32_SM_SENDMAIL_FROM_NOT_SET;
 			return FAILURE;
@@ -269,8 +267,8 @@ PHPAPI int TSendMail(char *host, int *error, char **error_message,
 			efree(RPath);
 		}
 		if (headers) {
-			zend_string_free(headers_trim);
-			zend_string_free(headers_lc);
+			zend_string_release(headers_trim);
+			zend_string_release(headers_lc);
 		}
 		/* 128 is safe here, the specifier in snprintf isn't longer than that */
 		*error_message = ecalloc(1, HOST_NAME_LEN + 128);
@@ -286,8 +284,8 @@ PHPAPI int TSendMail(char *host, int *error, char **error_message,
 			efree(RPath);
 		}
 		if (headers) {
-			zend_string_free(headers_trim);
-			zend_string_free(headers_lc);
+			zend_string_release(headers_trim);
+			zend_string_release(headers_lc);
 		}
 		if (ret != SUCCESS) {
 			*error = ret;
@@ -337,9 +335,6 @@ PHPAPI char *GetSMErrorText(int index)
 
 	}
 }
-
-PHPAPI zend_string *php_str_to_str(char *haystack, size_t length, char *needle,
-		size_t needle_len, char *str, size_t str_len);
 
 
 /*********************************************************************
@@ -987,12 +982,3 @@ static int FormatEmailAddress(char* Buf, char* EmailAddress, char* FormatString)
 	}
 	return snprintf(Buf, MAIL_BUFFER_SIZE , FormatString , EmailAddress );
 } /* end FormatEmailAddress() */
-
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * End:
- * vim600: sw=4 ts=4 fdm=marker
- * vim<600: sw=4 ts=4
- */

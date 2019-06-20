@@ -2,13 +2,12 @@
 ziparchive::addFile() function
 --SKIPIF--
 <?php
-/* $Id$ */
 if(!extension_loaded('zip')) die('skip');
 ?>
 --FILE--
 <?php
 
-$dirname = dirname(__FILE__) . '/';
+$dirname = __DIR__ . '/';
 include $dirname . 'utils.inc';
 $file = $dirname . '__tmp_oo_addfile.zip';
 
@@ -22,7 +21,17 @@ if (!$zip->addFile($dirname . 'utils.inc', 'test.php')) {
 	echo "failed\n";
 }
 if ($zip->status == ZIPARCHIVE::ER_OK) {
-	dump_entries_name($zip);
+	if (!verify_entries($zip, [
+		"bar",
+		"foobar/",
+		"foobar/baz",
+		"entry1.txt",
+		"test.php"
+	])) {
+		echo "failed\n";
+	} else {
+		echo "OK";
+	}
 	$zip->close();
 } else {
 	echo "failed\n";
@@ -30,8 +39,4 @@ if ($zip->status == ZIPARCHIVE::ER_OK) {
 @unlink($file);
 ?>
 --EXPECT--
-0 bar
-1 foobar/
-2 foobar/baz
-3 entry1.txt
-4 test.php
+OK

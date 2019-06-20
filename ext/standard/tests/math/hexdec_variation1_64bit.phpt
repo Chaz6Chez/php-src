@@ -9,7 +9,7 @@ if (PHP_INT_SIZE != 8) die("skip this test is for 64bit platform only");
 --FILE--
 <?php
 /* Prototype  : number hexdec  ( string $hex_string  )
- * Description: Returns the decimal equivalent of the hexadecimal number represented by the hex_string  argument. 
+ * Description: Returns the decimal equivalent of the hexadecimal number represented by the hex_string  argument.
  * Source code: ext/standard/math.c
  */
 
@@ -32,9 +32,9 @@ $inputs = array(
 /*1*/  0,
        1,
        12345,
-       -2345,       
-       4294967295,  // largest decimal  
-       4294967296, 
+       -2345,
+       4294967295,  // largest decimal
+       4294967296,
 
        // float data
 /*7*/  10.5,
@@ -52,7 +52,7 @@ $inputs = array(
        false,
        TRUE,
        FALSE,
-       
+
        // empty data
 /*18*/ "",
        '',
@@ -77,13 +77,17 @@ $inputs = array(
 $iterator = 1;
 foreach($inputs as $input) {
 	echo "\n-- Iteration $iterator --\n";
-	var_dump(hexdec($input));
+	try {
+		var_dump(hexdec($input));
+	} catch (TypeError $e) {
+		echo $e->getMessage(), "\n";
+	}
 	$iterator++;
 };
 fclose($fp);
 ?>
 ===Done===
---EXPECTF--
+--EXPECT--
 *** Testing hexdec() : usage variations ***
 
 -- Iteration 1 --
@@ -144,9 +148,7 @@ int(0)
 int(0)
 
 -- Iteration 20 --
-
-Notice: Array to string conversion in %s on line %d
-int(170)
+hexdec() expects parameter 1 to be string, array given
 
 -- Iteration 21 --
 int(2748)
@@ -164,5 +166,5 @@ int(0)
 int(0)
 
 -- Iteration 26 --
-%s
+hexdec() expects parameter 1 to be string, resource given
 ===Done===
